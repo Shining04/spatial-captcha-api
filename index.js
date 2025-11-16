@@ -31,33 +31,32 @@ const pool = new Pool({
 // 1. Render 대시보드에서 'MASTER_API_KEY'라는 이름의 변수를 찾아 읽어옵니다.
 const MASTER_API_KEY = process.env.MASTER_API_KEY; 
 
-// 2. Render 대시보드에서 'VERCEL_APP_URL'라는 이름의 변수를 찾아 읽어옵니다.
-const VERCEL_APP_URL = process.env.VERCEL_APP_URL; 
+// ...
+// 1. Render 대시보드에서 'MASTER_API_KEY'라는 이름의 변수를 찾아 읽어옵니다.
+    
+// 2. [v1.0 수정] VERCEL_APP_URL 변수를 삭제합니다. (DB에서 동적으로 처리)
 
-// 3. (안전장치) 만약 Render에 변수가 설정되지 않았으면, 서버를 즉시 중지시킵니다.
-if (!MASTER_API_KEY || !VERCEL_APP_URL) {
-  console.error(" [치명적 오류] : MASTER_API_KEY 또는 VERCEL_APP_URL 환경 변수가 설정되지 않았습니다!");
-  console.error(" Render.com 대시보드의 'Environment' 탭을 확인하세요.");
-  // process.exit(1); // 서버 강제 종료 (선택 사항)
+// 3. (안전장치) MASTER_API_KEY만 검사합니다.
+if (!MASTER_API_KEY) { // <-- [수정 1]
+  console.error(" [치명적 오류] : MASTER_API_KEY 환경 변수가 설정되지 않았습니다!");
 } else {
   console.log("[환경 변수] 마스터 API 키 로드 성공 (***...)" + MASTER_API_KEY.slice(-4));
-  console.log(`[환경 변수] 허용된 CORS 오리진: ${VERCEL_APP_URL}`);
 }
 
-// --- CORS 설정 (환경 변수 사용) ---
-const corsOptions = {
-  origin: VERCEL_APP_URL, // Render 대시보드에서 읽어온 Vercel 주소를 사용
-  optionsSuccessStatus: 200 
-};
+// --- CORS 설정 (v1.0 최종 수정) ---
+// [수정 2] corsOptions 객체를 삭제합니다.
+// [수정 3] app.use(cors())를 호출하여 "모든 출처"의 '사전 요청(Preflight)'을 허용합니다.
+// (보안 검사는 2차 관문인 'DB 문지기'가 담당하므로 안전합니다.)
+app.use(cors()); 
+app.use(express.json()); 
 
-// ... (이하는 app.use(cors(corsOptions)); 부터 동일합니다) ...
+// 7. [v1.0 수정] OPTIONS 요청 핸들러도 cors()로 변경
+app.options('/api/v1/create', cors()); // <-- [수정 4]
+app.options('/api/v1/verify', cors()); // <-- [수정 5]
 
-app.use(cors(corsOptions)); // 설정된 옵션으로 CORS 사용
-app.use(express.json()); // 클라이언트가 보낸 JSON 데이터를 서버가 알아듣도록 설정
-
-// Vercel에서 보낼 OPTIONS (preflight) 요청을 명시적으로 허용합니다.
-app.options('/api/v1/create', cors(corsOptions));
-app.options('/api/v1/verify', cors(corsOptions));
+// 8. [필수] API 키 인증 '문지기' (DB 연동 버전)
+// (이 'DB 문지기'가 2차 관문 역할을 하여, 허용된 도메인만 통과시킵니다.)
+// ... (이하 'DB 문지기' 코드는 그대로 둡니다) ...
 // ---
 
 // 3. 임시 데이터 저장소 (서버가 켜져 있는 동안에만 정답을 기억함)
