@@ -92,14 +92,16 @@ app.use('/api/v1', async (req, res, next) => {
     }
 
     // 3. DB에 키가 존재합니다! (인증 성공)
-    const customer = result.rows[0]; // 고객 정보 (api_key, allowed_domain)
+// ... (DB 조회 성공)
+const customer = result.rows[0]; 
 
-    // 4. (보안 강화) 이 키가 허용된 도메인(Origin)에서 왔는지 확인합니다.
-    // (주의: Supabase에 저장한 Vercel 주소와 Origin이 정확히 일치해야 합니다)
-    if (customer.allowed_domain !== origin) {
-      console.warn(`[DB 인증 실패] 허용되지 않은 도메인: ${origin} (API 키: ${apiKey})`);
-      return res.status(401).json({ message: "인증 실패: 허용되지 않은 도메인입니다." });
-    }
+// 4. [v0.4 수정] 이 키가 허용된 도메인(Origin)에서 왔는지 확인합니다.
+// (customer.allowed_domain이 '배열'임을 전제로 '.includes()' 검사)
+if (!customer.allowed_domain || !customer.allowed_domain.includes(origin)) {
+  console.warn(`[DB 인증 실패] 허용되지 않은 도메인: ${origin} (허용 목록: [${customer.allowed_domain}])`);
+  return res.status(401).json({ message: "인증 실패: 허용되지 않은 도메인입니다." });
+}
+// ...
 
     // 5. 모든 인증 통과!
     // console.log(`[DB 인증 성공] API 키: ${apiKey.slice(-4)}...`);
