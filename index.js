@@ -14,9 +14,18 @@ const { v4: uuidv4 } = require('uuid');
 const THREE = require('three');
 
 const app = express();
+// ...
 const port = process.env.PORT || 3000;
-// --- 5-C 단계: 환경 변수(Environment Variables)에서 비밀 값 읽기 ---
+
+// [!!! v1.0 추가 !!!]
+// 'free' 플랜의 월간 사용량 한도를 정의합니다.
+// (나중에 Render 환경 변수로 빼도 좋습니다.)
+const FREE_TIER_QUOTA = 1000; // 예: 월 1,000회
+
+// [!!! v1.0 추가 !!!]
+// DB 연결 풀을 생성합니다.
 const pool = new Pool({
+// ...
   connectionString: process.env.DATABASE_URL,
 });
 // 1. Render 대시보드에서 'MASTER_API_KEY'라는 이름의 변수를 찾아 읽어옵니다.
@@ -72,40 +81,47 @@ function randFloat(min, max) {
 // /api/v1/ 로 시작하는 모든 요청은 이 코드를 먼저 통과해야 합니다.
 // 8. [필수] API 키 인증 '문지기' (DB 연동 버전)
 // (async 함수로 변경되었습니다)
+// index.js의 'DB 문지기' (app.use('/api/v1', ...)) 함수 전체를 이걸로 교체하세요.
+
+// 8. [필수] API 키 인증 '문지기' (v1.0 결제/한도 검사 버전)
 app.use('/api/v1', async (req, res, next) => {
   try {
     const apiKey = req.header('X-API-Key');
-    const origin = req.header('Origin'); // 'https://...vercel.app' 또는 'http://...고객사이트.com'
+    const origin = req.header('Origin'); 
 
     if (!apiKey) {
       return res.status(401).json({ message: "인증 실패: API 키가 누락되었습니다." });
     }
 
-    // 1. DB에 API 키가 있는지 조회합니다.
+    // 1. [v1.0 수정] DB에서 고객의 모든 정보를 조회합니다.
     const query = "SELECT * FROM customers WHERE api_key = $1";
     const result = await pool.query(query, [apiKey]);
 
-    // 2. DB에 키가 존재하지 않으면 (조회 결과가 0건) -> 차단!
     if (result.rows.length === 0) {
       console.warn(`[DB 인증 실패] 등록되지 않은 API 키: ${apiKey}`);
       return res.status(401).json({ message: "인증 실패: 유효하지 않은 API 키입니다." });
     }
 
-    // 3. DB에 키가 존재합니다! (인증 성공)
-// ... (DB 조회 성공)
-const customer = result.rows[0]; 
+    const customer = result.rows[0]; // 고객 정보 (plan, usage_count 등)
 
-// 4. [v0.4 수정] 이 키가 허용된 도메인(Origin)에서 왔는지 확인합니다.
-// (customer.allowed_domain이 '배열'임을 전제로 '.includes()' 검사)
-if (!customer.allowed_domain || !customer.allowed_domain.includes(origin)) {
-  console.warn(`[DB 인증 실패] 허용되지 않은 도메인: ${origin} (허용 목록: [${customer.allowed_domain}])`);
-  return res.status(401).json({ message: "인증 실패: 허용되지 않은 도메인입니다." });
-}
-// ...
+    // 2. [v1.0 수정] 도메인 검사 (배열 검사)
+    if (!customer.allowed_domain || !customer.allowed_domain.includes(origin)) {
+      console.warn(`[DB 인증 실패] 허용되지 않은 도메인: ${origin} (허용 목록: [${customer.allowed_domain}])`);
+      return res.status(401).json({ message: "인증 실패: 허용되지 않은 도메인입니다." });
+    }
 
-    // 5. 모든 인증 통과!
-    // console.log(`[DB 인증 성공] API 키: ${apiKey.slice(-4)}...`);
-    next(); // 다음 단계 (create, verify API)로 요청을 넘깁니다.
+    // 3. [v1.0 추가] 사용량 한도(Quota) 검사
+    if (customer.plan === 'free' && customer.usage_count >= FREE_TIER_QUOTA) {
+      console.warn(`[한도 초과] 'free' 플랜 고객(${apiKey.slice(-4)})이 한도(${FREE_TIER_QUOTA})를 초과했습니다.`);
+      // 429 Too Many Requests (너무 많은 요청) 오류를 반환
+      return res.status(429).json({ message: "사용량 한도 초과: 'Pro' 플랜으로 업그레이드하세요." });
+    }
+
+    // 4. 모든 인증 통과!
+    // [v1.0 추가] 다음 단계(/create, /verify)에서 고객 정보를 다시 조회하지 않도록,
+    // 'req' 객체에 고객 정보를 실어 보냅니다.
+    req.customer = customer;
+    next(); 
 
   } catch (error) {
     console.error("[DB 문지기 오류]", error);
@@ -118,44 +134,61 @@ if (!customer.allowed_domain || !customer.allowed_domain.includes(origin)) {
 // ...
 // index.js 파일에서 app.post('/api/v1/create', ...) 함수 전체를 이걸로 교체하세요.
 
+// index.js의 '/api/v1/create' 함수 전체를 이걸로 교체하세요.
+
 app.post('/api/v1/create', async (req, res) => {
+  // [!!! v1.0 수정 !!!]
+  // '문지기'가 통과시킨 고객 정보를 req 객체에서 받습니다.
+  const customerApiKey = req.customer.api_key; 
+  
+  // (트랜잭션 시작) - DB 작업을 묶어서 처리 (선택 사항이지만 권장)
+  const client = await pool.connect();
+
   try {
-    // [v0.3 수정]
+    await client.query('BEGIN'); // 트랜잭션 시작
+
     // 1. DB의 'models' 테이블에서 모델 1개를 랜덤으로 가져옵니다.
     const modelQuery = "SELECT model_url FROM models ORDER BY RANDOM() LIMIT 1";
-    const modelResult = await pool.query(modelQuery);
+    const modelResult = await client.query(modelQuery);
 
     if (modelResult.rows.length === 0) {
-      throw new Error("DB에 등록된 3D 모델이 없습니다. Supabase 'models' 테이블을 확인하세요.");
+      throw new Error("DB에 등록된 3D 모델이 없습니다.");
     }
-
     const selectedModelUrl = modelResult.rows[0].model_url;
 
     // 2. 고유한 세션 ID 생성
     const sessionId = uuidv4();
 
     // 3. 무작위 정답 각도 생성
-    const targetRotation = {
-      x: degToRad(randFloat(-90, 90)),
-      y: degToRad(randFloat(-90, 90)),
-      z: degToRad(randFloat(-45, 45))
-    };
+    const targetRotation = { /* ... (각도 생성 로직은 동일) ... */ };
 
     // 4. 임시 저장소에 [세션ID]와 [정답]을 저장
     sessionStore[sessionId] = targetRotation;
 
-    // 5. 클라이언트에게 "세션 ID", "정답 각도", 그리고 "랜덤 모델 URL"을 전달
+    // 5. [v1.0 추가] 캡챠가 생성되었으므로, 고객의 사용량(usage_count)을 +1 업데이트합니다.
+    const updateUsageQuery = "UPDATE customers SET usage_count = usage_count + 1 WHERE api_key = $1";
+    await client.query(updateUsageQuery, [customerApiKey]);
+
+    // 6. 모든 DB 작업이 성공했으므로, 트랜잭션을 '커밋' (확정)합니다.
+    await client.query('COMMIT'); 
+    
+    // 7. 클라이언트에게 응답을 보냅니다.
     res.status(201).json({ 
       session_id: sessionId,
       target_rotation: targetRotation,
-      model_url: selectedModelUrl // <-- [!!!] 이 줄이 추가되었습니다!
+      model_url: selectedModelUrl
     });
 
-    console.log(`[v0.3 챌린지 생성] 모델: ${selectedModelUrl}, 세션: ${sessionId}`);
+    console.log(`[v1.0 챌린지 생성] 모델: ${selectedModelUrl}, 고객: ${customerApiKey.slice(-4)}`);
 
   } catch (error) {
+    // [v1.0 추가] 오류 발생 시 모든 DB 작업을 '롤백' (취소)합니다.
+    await client.query('ROLLBACK'); 
     console.error("[Create API 오류]", error);
     res.status(500).json({ message: "서버 내부 오류 (Create)" });
+  } finally {
+    // [v1.0 추가] 사용한 DB 연결을 반납합니다.
+    client.release(); 
   }
 });
 
