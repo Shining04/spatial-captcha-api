@@ -114,11 +114,12 @@ app.use('/api/v1', async (req, res, next) => {
 
 // 5. 캡챠 챌린지 생성 API (POST /api/v1/create)
 // ...
+// index.js 파일에서 app.post('/api/v1/create', ...) 함수 전체를 이걸로 교체하세요.
+
 app.post('/api/v1/create', async (req, res) => {
   try {
-    // [!!! v0.3 수정 !!!]
+    // [v0.3 수정]
     // 1. DB의 'models' 테이블에서 모델 1개를 랜덤으로 가져옵니다.
-    // (PostgreSQL의 "ORDER BY RANDOM() LIMIT 1" 구문 사용)
     const modelQuery = "SELECT model_url FROM models ORDER BY RANDOM() LIMIT 1";
     const modelResult = await pool.query(modelQuery);
 
@@ -153,15 +154,6 @@ app.post('/api/v1/create', async (req, res) => {
   } catch (error) {
     console.error("[Create API 오류]", error);
     res.status(500).json({ message: "서버 내부 오류 (Create)" });
-  }
-});
-// ...
-
-    console.log(`[${sessionId}] 챌린지 생성됨. (프론트엔드로 정답 전달 완료)`);
-
-  } catch (error) {
-    console.error("Create API 오류:", error);
-    res.status(500).json({ message: "서버 내부 오류" });
   }
 });
 
