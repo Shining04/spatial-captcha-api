@@ -113,29 +113,49 @@ app.use('/api/v1', async (req, res, next) => {
 
 
 // 5. 캡챠 챌린지 생성 API (POST /api/v1/create)
-app.post('/api/v1/create', (req, res) => {
-// ... (이하 코드 동일) ...
+// ...
+app.post('/api/v1/create', async (req, res) => {
   try {
-    // 1. 고유한 세션 ID 생성
+    // [!!! v0.3 수정 !!!]
+    // 1. DB의 'models' 테이블에서 모델 1개를 랜덤으로 가져옵니다.
+    // (PostgreSQL의 "ORDER BY RANDOM() LIMIT 1" 구문 사용)
+    const modelQuery = "SELECT model_url FROM models ORDER BY RANDOM() LIMIT 1";
+    const modelResult = await pool.query(modelQuery);
+
+    if (modelResult.rows.length === 0) {
+      throw new Error("DB에 등록된 3D 모델이 없습니다. Supabase 'models' 테이블을 확인하세요.");
+    }
+
+    const selectedModelUrl = modelResult.rows[0].model_url;
+
+    // 2. 고유한 세션 ID 생성
     const sessionId = uuidv4();
 
-    // 2. script.js의 로직처럼 무작위 정답 각도 생성
-    // (이 정답은 서버만 알고 있습니다.)
+    // 3. 무작위 정답 각도 생성
     const targetRotation = {
       x: degToRad(randFloat(-90, 90)),
       y: degToRad(randFloat(-90, 90)),
       z: degToRad(randFloat(-45, 45))
     };
 
-    // 3. 임시 저장소에 [세션ID]와 [정답]을 저장
+    // 4. 임시 저장소에 [세션ID]와 [정답]을 저장
     sessionStore[sessionId] = targetRotation;
 
-  // 4. 클라이언트(웹페이지)에게 "세션 ID"와 "정답 각도"를 전달
-    // (참고: script.js가 이 정답 각도를 알아야 preview(미리보기) 캔버스를 그릴 수 있습니다.)
+    // 5. 클라이언트에게 "세션 ID", "정답 각도", 그리고 "랜덤 모델 URL"을 전달
     res.status(201).json({ 
       session_id: sessionId,
-      target_rotation: targetRotation // <-- 이 부분이 추가되었습니다!
+      target_rotation: targetRotation,
+      model_url: selectedModelUrl // <-- [!!!] 이 줄이 추가되었습니다!
     });
+
+    console.log(`[v0.3 챌린지 생성] 모델: ${selectedModelUrl}, 세션: ${sessionId}`);
+
+  } catch (error) {
+    console.error("[Create API 오류]", error);
+    res.status(500).json({ message: "서버 내부 오류 (Create)" });
+  }
+});
+// ...
 
     console.log(`[${sessionId}] 챌린지 생성됨. (프론트엔드로 정답 전달 완료)`);
 
