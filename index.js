@@ -192,7 +192,7 @@ app.post('/api/v1/verify', (req, res) => {
     const angleRadians = userQuaternion.angleTo(targetQuaternion);
     const angleDegrees = THREE.MathUtils.radToDeg(angleRadians);
 
-    const toleranceDegrees = 35;
+    const toleranceDegrees = 45;
 
     if (angleDegrees < toleranceDegrees) {
       // 4. [보안 #4] 성공 시 1회용 pass_token 발급 (3분 TTL)
