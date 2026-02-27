@@ -24,6 +24,12 @@ if (!DATABASE_URL) {
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  connectionTimeoutMillis: 10000,   // 10초 연결 타임아웃
+  idleTimeoutMillis: 30000,         // 30초 유휴 후 연결 해제
+  max: 5,                           // 최대 5개 연결
+  keepAlive: true,                  // TCP keepalive 활성화
+  keepAliveInitialDelayMillis: 10000,
 });
 
 // --- 4. CORS 및 미들웨어 설정 ---
